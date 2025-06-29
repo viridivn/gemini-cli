@@ -1,0 +1,810 @@
+diff --git a/README.md b/README.md
+index c7092e4..dff5b07 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,5 @@
++This fork of the Gemini CLI has been modified to not auto-switch to Gemini Flash when slow response times are experienced. It does NOT increase any ratelimits or work around any paywalls - you'll still hit the same ratelimits, but you'll actually know about them instead of silently switching to a worse model.
++---
+ # Gemini CLI
+ 
+ [![Gemini CLI CI](https://github.com/google-gemini/gemini-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/google-gemini/gemini-cli/actions/workflows/ci.yml)
+diff --git a/packages/cli/src/ui/App.test.tsx b/packages/cli/src/ui/App.test.tsx
+index 2f12615..5678e3a 100644
+--- a/packages/cli/src/ui/App.test.tsx
++++ b/packages/cli/src/ui/App.test.tsx
+@@ -126,7 +126,6 @@ vi.mock('@google/gemini-cli-core', async (importOriginal) => {
+         getGeminiClient: vi.fn(() => ({})),
+         getCheckpointingEnabled: vi.fn(() => opts.checkpointing ?? true),
+         getAllGeminiMdFilenames: vi.fn(() => ['GEMINI.md']),
+-        setFlashFallbackHandler: vi.fn(),
+       };
+     });
+   return {
+diff --git a/packages/cli/src/ui/App.tsx b/packages/cli/src/ui/App.tsx
+index 6bbe47d..e38ba8e 100644
+--- a/packages/cli/src/ui/App.tsx
++++ b/packages/cli/src/ui/App.tsx
+@@ -223,7 +223,7 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
+     }
+   }, [config, addItem]);
+ 
+-  // Watch for model changes (e.g., from Flash fallback)
++  // Watch for model changes
+   useEffect(() => {
+     const checkModelChange = () => {
+       const configModel = config.getModel();
+@@ -239,29 +239,6 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
+     return () => clearInterval(interval);
+   }, [config, currentModel]);
+ 
+-  // Set up Flash fallback handler
+-  useEffect(() => {
+-    const flashFallbackHandler = async (
+-      currentModel: string,
+-      fallbackModel: string,
+-    ): Promise<boolean> => {
+-      // Add message to UI history
+-      addItem(
+-        {
+-          type: MessageType.INFO,
+-          text: `⚡ Slow response times detected. Automatically switching from ${currentModel} to ${fallbackModel} for faster responses for the remainder of this session.
+-⚡ To avoid this you can either upgrade to Standard tier. See: https://goo.gle/set-up-gemini-code-assist
+-⚡ Or you can utilize a Gemini API Key. See: https://goo.gle/gemini-cli-docs-auth#gemini-api-key
+-⚡ You can switch authentication methods by typing /auth`,
+-        },
+-        Date.now(),
+-      );
+-      return true; // Always accept the fallback
+-    };
+-
+-    config.setFlashFallbackHandler(flashFallbackHandler);
+-  }, [config, addItem]);
+-
+   const {
+     handleSlashCommand,
+     slashCommands,
+diff --git a/packages/core/src/config/config.ts b/packages/core/src/config/config.ts
+index 4ee2d23..6f4d4e2 100644
+--- a/packages/core/src/config/config.ts
++++ b/packages/core/src/config/config.ts
+@@ -91,11 +91,6 @@ export interface SandboxConfig {
+   image: string;
+ }
+ 
+-export type FlashFallbackHandler = (
+-  currentModel: string,
+-  fallbackModel: string,
+-) => Promise<boolean>;
+-
+ export interface ConfigParameters {
+   sessionId: string;
+   embeddingModel?: string;
+@@ -168,7 +163,6 @@ export class Config {
+   private readonly model: string;
+   private readonly extensionContextFilePaths: string[];
+   private modelSwitchedDuringSession: boolean = false;
+-  flashFallbackHandler?: FlashFallbackHandler;
+ 
+   constructor(params: ConfigParameters) {
+     this.sessionId = params.sessionId;
+@@ -286,10 +280,6 @@ export class Config {
+     }
+   }
+ 
+-  setFlashFallbackHandler(handler: FlashFallbackHandler): void {
+-    this.flashFallbackHandler = handler;
+-  }
+-
+   getEmbeddingModel(): string {
+     return this.embeddingModel;
+   }
+diff --git a/packages/core/src/config/flashFallback.test.ts b/packages/core/src/config/flashFallback.test.ts
+deleted file mode 100644
+index 325cc06..0000000
+--- a/packages/core/src/config/flashFallback.test.ts
++++ /dev/null
+@@ -1,139 +0,0 @@
+-/**
+- * @license
+- * Copyright 2025 Google LLC
+- * SPDX-License-Identifier: Apache-2.0
+- */
+-
+-import { describe, it, expect, beforeEach } from 'vitest';
+-import { Config } from './config.js';
+-import { DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_FLASH_MODEL } from './models.js';
+-
+-describe('Flash Model Fallback Configuration', () => {
+-  let config: Config;
+-
+-  beforeEach(() => {
+-    config = new Config({
+-      sessionId: 'test-session',
+-      targetDir: '/test',
+-      debugMode: false,
+-      cwd: '/test',
+-      model: DEFAULT_GEMINI_MODEL,
+-    });
+-
+-    // Initialize contentGeneratorConfig for testing
+-    (
+-      config as unknown as { contentGeneratorConfig: unknown }
+-    ).contentGeneratorConfig = {
+-      model: DEFAULT_GEMINI_MODEL,
+-      authType: 'oauth-personal',
+-    };
+-  });
+-
+-  describe('setModel', () => {
+-    it('should update the model and mark as switched during session', () => {
+-      expect(config.getModel()).toBe(DEFAULT_GEMINI_MODEL);
+-      expect(config.isModelSwitchedDuringSession()).toBe(false);
+-
+-      config.setModel(DEFAULT_GEMINI_FLASH_MODEL);
+-
+-      expect(config.getModel()).toBe(DEFAULT_GEMINI_FLASH_MODEL);
+-      expect(config.isModelSwitchedDuringSession()).toBe(true);
+-    });
+-
+-    it('should handle multiple model switches during session', () => {
+-      config.setModel(DEFAULT_GEMINI_FLASH_MODEL);
+-      expect(config.isModelSwitchedDuringSession()).toBe(true);
+-
+-      config.setModel('gemini-1.5-pro');
+-      expect(config.getModel()).toBe('gemini-1.5-pro');
+-      expect(config.isModelSwitchedDuringSession()).toBe(true);
+-    });
+-
+-    it('should only mark as switched if contentGeneratorConfig exists', () => {
+-      // Create config without initializing contentGeneratorConfig
+-      const newConfig = new Config({
+-        sessionId: 'test-session-2',
+-        targetDir: '/test',
+-        debugMode: false,
+-        cwd: '/test',
+-        model: DEFAULT_GEMINI_MODEL,
+-      });
+-
+-      // Should not crash when contentGeneratorConfig is undefined
+-      newConfig.setModel(DEFAULT_GEMINI_FLASH_MODEL);
+-      expect(newConfig.isModelSwitchedDuringSession()).toBe(false);
+-    });
+-  });
+-
+-  describe('getModel', () => {
+-    it('should return contentGeneratorConfig model if available', () => {
+-      // Simulate initialized content generator config
+-      config.setModel(DEFAULT_GEMINI_FLASH_MODEL);
+-      expect(config.getModel()).toBe(DEFAULT_GEMINI_FLASH_MODEL);
+-    });
+-
+-    it('should fallback to initial model if contentGeneratorConfig is not available', () => {
+-      // Test with fresh config where contentGeneratorConfig might not be set
+-      const newConfig = new Config({
+-        sessionId: 'test-session-2',
+-        targetDir: '/test',
+-        debugMode: false,
+-        cwd: '/test',
+-        model: 'custom-model',
+-      });
+-
+-      expect(newConfig.getModel()).toBe('custom-model');
+-    });
+-  });
+-
+-  describe('isModelSwitchedDuringSession', () => {
+-    it('should start as false for new session', () => {
+-      expect(config.isModelSwitchedDuringSession()).toBe(false);
+-    });
+-
+-    it('should remain false if no model switch occurs', () => {
+-      // Perform other operations that don't involve model switching
+-      expect(config.isModelSwitchedDuringSession()).toBe(false);
+-    });
+-
+-    it('should persist switched state throughout session', () => {
+-      config.setModel(DEFAULT_GEMINI_FLASH_MODEL);
+-      expect(config.isModelSwitchedDuringSession()).toBe(true);
+-
+-      // Should remain true even after getting model
+-      config.getModel();
+-      expect(config.isModelSwitchedDuringSession()).toBe(true);
+-    });
+-  });
+-
+-  describe('resetModelToDefault', () => {
+-    it('should reset model to default and clear session switch flag', () => {
+-      // Switch to Flash first
+-      config.setModel(DEFAULT_GEMINI_FLASH_MODEL);
+-      expect(config.getModel()).toBe(DEFAULT_GEMINI_FLASH_MODEL);
+-      expect(config.isModelSwitchedDuringSession()).toBe(true);
+-
+-      // Reset to default
+-      config.resetModelToDefault();
+-
+-      // Should be back to default with flag cleared
+-      expect(config.getModel()).toBe(DEFAULT_GEMINI_MODEL);
+-      expect(config.isModelSwitchedDuringSession()).toBe(false);
+-    });
+-
+-    it('should handle case where contentGeneratorConfig is not initialized', () => {
+-      // Create config without initializing contentGeneratorConfig
+-      const newConfig = new Config({
+-        sessionId: 'test-session-2',
+-        targetDir: '/test',
+-        debugMode: false,
+-        cwd: '/test',
+-        model: DEFAULT_GEMINI_MODEL,
+-      });
+-
+-      // Should not crash when contentGeneratorConfig is undefined
+-      expect(() => newConfig.resetModelToDefault()).not.toThrow();
+-      expect(newConfig.isModelSwitchedDuringSession()).toBe(false);
+-    });
+-  });
+-});
+diff --git a/packages/core/src/core/client.ts b/packages/core/src/core/client.ts
+index 3030676..feb5a81 100644
+--- a/packages/core/src/core/client.ts
++++ b/packages/core/src/core/client.ts
+@@ -32,7 +32,6 @@ import { retryWithBackoff } from '../utils/retry.js';
+ import { getErrorMessage } from '../utils/errors.js';
+ import { tokenLimit } from './tokenLimits.js';
+ import {
+-  AuthType,
+   ContentGenerator,
+   ContentGeneratorConfig,
+   createContentGenerator,
+@@ -276,11 +275,7 @@ export class GeminiClient {
+           contents,
+         });
+ 
+-      const result = await retryWithBackoff(apiCall, {
+-        onPersistent429: async (authType?: string) =>
+-          await this.handleFlashFallback(authType),
+-        authType: this.config.getContentGeneratorConfig()?.authType,
+-      });
++      const result = await retryWithBackoff(apiCall);
+ 
+       const text = getResponseText(result);
+       if (!text) {
+@@ -364,11 +359,7 @@ export class GeminiClient {
+           contents,
+         });
+ 
+-      const result = await retryWithBackoff(apiCall, {
+-        onPersistent429: async (authType?: string) =>
+-          await this.handleFlashFallback(authType),
+-        authType: this.config.getContentGeneratorConfig()?.authType,
+-      });
++      const result = await retryWithBackoff(apiCall);
+       return result;
+     } catch (error: unknown) {
+       if (abortSignal.aborted) {
+@@ -497,40 +488,4 @@ export class GeminiClient {
+         }
+       : null;
+   }
+-
+-  /**
+-   * Handles fallback to Flash model when persistent 429 errors occur for OAuth users.
+-   * Uses a fallback handler if provided by the config, otherwise returns null.
+-   */
+-  private async handleFlashFallback(authType?: string): Promise<string | null> {
+-    // Only handle fallback for OAuth users
+-    if (authType !== AuthType.LOGIN_WITH_GOOGLE_PERSONAL) {
+-      return null;
+-    }
+-
+-    const currentModel = this.model;
+-    const fallbackModel = DEFAULT_GEMINI_FLASH_MODEL;
+-
+-    // Don't fallback if already using Flash model
+-    if (currentModel === fallbackModel) {
+-      return null;
+-    }
+-
+-    // Check if config has a fallback handler (set by CLI package)
+-    const fallbackHandler = this.config.flashFallbackHandler;
+-    if (typeof fallbackHandler === 'function') {
+-      try {
+-        const accepted = await fallbackHandler(currentModel, fallbackModel);
+-        if (accepted) {
+-          this.config.setModel(fallbackModel);
+-          this.model = fallbackModel;
+-          return fallbackModel;
+-        }
+-      } catch (error) {
+-        console.warn('Flash fallback handler failed:', error);
+-      }
+-    }
+-
+-    return null;
+-  }
+ }
+diff --git a/packages/core/src/core/geminiChat.test.ts b/packages/core/src/core/geminiChat.test.ts
+index bfaeb8f..7bdbe91 100644
+--- a/packages/core/src/core/geminiChat.test.ts
++++ b/packages/core/src/core/geminiChat.test.ts
+@@ -43,7 +43,6 @@ describe('GeminiChat', () => {
+       }),
+       getModel: vi.fn().mockReturnValue('gemini-pro'),
+       setModel: vi.fn(),
+-      flashFallbackHandler: undefined,
+     } as unknown as Config;
+ 
+     // Disable 429 simulation for tests
+diff --git a/packages/core/src/core/geminiChat.ts b/packages/core/src/core/geminiChat.ts
+index c51369f..fd524b0 100644
+--- a/packages/core/src/core/geminiChat.ts
++++ b/packages/core/src/core/geminiChat.ts
+@@ -18,7 +18,7 @@ import {
+ } from '@google/genai';
+ import { retryWithBackoff } from '../utils/retry.js';
+ import { isFunctionResponse } from '../utils/messageInspectors.js';
+-import { ContentGenerator, AuthType } from './contentGenerator.js';
++import { ContentGenerator } from './contentGenerator.js';
+ import { Config } from '../config/config.js';
+ import {
+   logApiRequest,
+@@ -191,41 +191,6 @@ export class GeminiChat {
+     );
+   }
+ 
+-  /**
+-   * Handles fallback to Flash model when persistent 429 errors occur for OAuth users.
+-   * Uses a fallback handler if provided by the config, otherwise returns null.
+-   */
+-  private async handleFlashFallback(authType?: string): Promise<string | null> {
+-    // Only handle fallback for OAuth users
+-    if (authType !== AuthType.LOGIN_WITH_GOOGLE_PERSONAL) {
+-      return null;
+-    }
+-
+-    const currentModel = this.config.getModel();
+-    const fallbackModel = DEFAULT_GEMINI_FLASH_MODEL;
+-
+-    // Don't fallback if already using Flash model
+-    if (currentModel === fallbackModel) {
+-      return null;
+-    }
+-
+-    // Check if config has a fallback handler (set by CLI package)
+-    const fallbackHandler = this.config.flashFallbackHandler;
+-    if (typeof fallbackHandler === 'function') {
+-      try {
+-        const accepted = await fallbackHandler(currentModel, fallbackModel);
+-        if (accepted) {
+-          this.config.setModel(fallbackModel);
+-          return fallbackModel;
+-        }
+-      } catch (error) {
+-        console.warn('Flash fallback handler failed:', error);
+-      }
+-    }
+-
+-    return null;
+-  }
+-
+   /**
+    * Sends a message to the model and returns the response.
+    *
+@@ -274,9 +239,6 @@ export class GeminiChat {
+           }
+           return false;
+         },
+-        onPersistent429: async (authType?: string) =>
+-          await this.handleFlashFallback(authType),
+-        authType: this.config.getContentGeneratorConfig()?.authType,
+       });
+       const durationMs = Date.now() - startTime;
+       await this._logApiResponse(
+@@ -371,9 +333,6 @@ export class GeminiChat {
+           }
+           return false; // Don't retry other errors by default
+         },
+-        onPersistent429: async (authType?: string) =>
+-          await this.handleFlashFallback(authType),
+-        authType: this.config.getContentGeneratorConfig()?.authType,
+       });
+ 
+       // Resolve the internal tracking of send completion promise - `sendPromise`
+diff --git a/packages/core/src/utils/flashFallback.integration.test.ts b/packages/core/src/utils/flashFallback.integration.test.ts
+deleted file mode 100644
+index cffe9aa..0000000
+--- a/packages/core/src/utils/flashFallback.integration.test.ts
++++ /dev/null
+@@ -1,143 +0,0 @@
+-/**
+- * @license
+- * Copyright 2025 Google LLC
+- * SPDX-License-Identifier: Apache-2.0
+- */
+-
+-import { describe, it, expect, beforeEach, vi } from 'vitest';
+-import { Config } from '../config/config.js';
+-import {
+-  setSimulate429,
+-  disableSimulationAfterFallback,
+-  shouldSimulate429,
+-  createSimulated429Error,
+-  resetRequestCounter,
+-} from './testUtils.js';
+-import { DEFAULT_GEMINI_FLASH_MODEL } from '../config/models.js';
+-import { retryWithBackoff } from './retry.js';
+-import { AuthType } from '../core/contentGenerator.js';
+-
+-describe('Flash Fallback Integration', () => {
+-  let config: Config;
+-
+-  beforeEach(() => {
+-    config = new Config({
+-      sessionId: 'test-session',
+-      targetDir: '/test',
+-      debugMode: false,
+-      cwd: '/test',
+-      model: 'gemini-2.5-pro',
+-    });
+-
+-    // Reset simulation state for each test
+-    setSimulate429(false);
+-    resetRequestCounter();
+-  });
+-
+-  it('should automatically accept fallback', async () => {
+-    // Set up a minimal flash fallback handler for testing
+-    const flashFallbackHandler = async (): Promise<boolean> => true;
+-
+-    config.setFlashFallbackHandler(flashFallbackHandler);
+-
+-    // Call the handler directly to test
+-    const result = await config.flashFallbackHandler!(
+-      'gemini-2.5-pro',
+-      DEFAULT_GEMINI_FLASH_MODEL,
+-    );
+-
+-    // Verify it automatically accepts
+-    expect(result).toBe(true);
+-  });
+-
+-  it('should trigger fallback after 2 consecutive 429 errors for OAuth users', async () => {
+-    let fallbackCalled = false;
+-    let fallbackModel = '';
+-
+-    // Mock function that simulates exactly 2 429 errors, then succeeds after fallback
+-    const mockApiCall = vi
+-      .fn()
+-      .mockRejectedValueOnce(createSimulated429Error())
+-      .mockRejectedValueOnce(createSimulated429Error())
+-      .mockResolvedValueOnce('success after fallback');
+-
+-    // Mock fallback handler
+-    const mockFallbackHandler = vi.fn(async (_authType?: string) => {
+-      fallbackCalled = true;
+-      fallbackModel = DEFAULT_GEMINI_FLASH_MODEL;
+-      return fallbackModel;
+-    });
+-
+-    // Test with OAuth personal auth type, with maxAttempts = 2 to ensure fallback triggers
+-    const result = await retryWithBackoff(mockApiCall, {
+-      maxAttempts: 2,
+-      initialDelayMs: 1,
+-      maxDelayMs: 10,
+-      shouldRetry: (error: Error) => {
+-        const status = (error as Error & { status?: number }).status;
+-        return status === 429;
+-      },
+-      onPersistent429: mockFallbackHandler,
+-      authType: AuthType.LOGIN_WITH_GOOGLE_PERSONAL,
+-    });
+-
+-    // Verify fallback was triggered
+-    expect(fallbackCalled).toBe(true);
+-    expect(fallbackModel).toBe(DEFAULT_GEMINI_FLASH_MODEL);
+-    expect(mockFallbackHandler).toHaveBeenCalledWith(
+-      AuthType.LOGIN_WITH_GOOGLE_PERSONAL,
+-    );
+-    expect(result).toBe('success after fallback');
+-    // Should have: 2 failures, then fallback triggered, then 1 success after retry reset
+-    expect(mockApiCall).toHaveBeenCalledTimes(3);
+-  });
+-
+-  it('should not trigger fallback for API key users', async () => {
+-    let fallbackCalled = false;
+-
+-    // Mock function that simulates 429 errors
+-    const mockApiCall = vi.fn().mockRejectedValue(createSimulated429Error());
+-
+-    // Mock fallback handler
+-    const mockFallbackHandler = vi.fn(async () => {
+-      fallbackCalled = true;
+-      return DEFAULT_GEMINI_FLASH_MODEL;
+-    });
+-
+-    // Test with API key auth type - should not trigger fallback
+-    try {
+-      await retryWithBackoff(mockApiCall, {
+-        maxAttempts: 5,
+-        initialDelayMs: 10,
+-        maxDelayMs: 100,
+-        shouldRetry: (error: Error) => {
+-          const status = (error as Error & { status?: number }).status;
+-          return status === 429;
+-        },
+-        onPersistent429: mockFallbackHandler,
+-        authType: AuthType.USE_GEMINI, // API key auth type
+-      });
+-    } catch (error) {
+-      // Expected to throw after max attempts
+-      expect((error as Error).message).toContain('Rate limit exceeded');
+-    }
+-
+-    // Verify fallback was NOT triggered for API key users
+-    expect(fallbackCalled).toBe(false);
+-    expect(mockFallbackHandler).not.toHaveBeenCalled();
+-  });
+-
+-  it('should properly disable simulation state after fallback', () => {
+-    // Enable simulation
+-    setSimulate429(true);
+-
+-    // Verify simulation is enabled
+-    expect(shouldSimulate429()).toBe(true);
+-
+-    // Disable simulation after fallback
+-    disableSimulationAfterFallback();
+-
+-    // Verify simulation is now disabled
+-    expect(shouldSimulate429()).toBe(false);
+-  });
+-});
+diff --git a/packages/core/src/utils/retry.test.ts b/packages/core/src/utils/retry.test.ts
+index a0294c3..ef572c2 100644
+--- a/packages/core/src/utils/retry.test.ts
++++ b/packages/core/src/utils/retry.test.ts
+@@ -237,168 +237,4 @@ describe('retryWithBackoff', () => {
+       expect(d).toBeLessThanOrEqual(100 * 1.3);
+     });
+   });
+-
+-  describe('Flash model fallback for OAuth users', () => {
+-    it('should trigger fallback for OAuth personal users after persistent 429 errors', async () => {
+-      const fallbackCallback = vi.fn().mockResolvedValue('gemini-2.5-flash');
+-
+-      let fallbackOccurred = false;
+-      const mockFn = vi.fn().mockImplementation(async () => {
+-        if (!fallbackOccurred) {
+-          const error: HttpError = new Error('Rate limit exceeded');
+-          error.status = 429;
+-          throw error;
+-        }
+-        return 'success';
+-      });
+-
+-      const promise = retryWithBackoff(mockFn, {
+-        maxAttempts: 3,
+-        initialDelayMs: 100,
+-        onPersistent429: async (authType?: string) => {
+-          fallbackOccurred = true;
+-          return await fallbackCallback(authType);
+-        },
+-        authType: 'oauth-personal',
+-      });
+-
+-      // Advance all timers to complete retries
+-      await vi.runAllTimersAsync();
+-
+-      // Should succeed after fallback
+-      await expect(promise).resolves.toBe('success');
+-
+-      // Verify callback was called with correct auth type
+-      expect(fallbackCallback).toHaveBeenCalledWith('oauth-personal');
+-
+-      // Should retry again after fallback
+-      expect(mockFn).toHaveBeenCalledTimes(3); // 2 initial attempts + 1 after fallback
+-    });
+-
+-    it('should NOT trigger fallback for API key users', async () => {
+-      const fallbackCallback = vi.fn();
+-
+-      const mockFn = vi.fn(async () => {
+-        const error: HttpError = new Error('Rate limit exceeded');
+-        error.status = 429;
+-        throw error;
+-      });
+-
+-      const promise = retryWithBackoff(mockFn, {
+-        maxAttempts: 3,
+-        initialDelayMs: 100,
+-        onPersistent429: fallbackCallback,
+-        authType: 'gemini-api-key',
+-      });
+-
+-      // Handle the promise properly to avoid unhandled rejections
+-      const resultPromise = promise.catch((error) => error);
+-      await vi.runAllTimersAsync();
+-      const result = await resultPromise;
+-
+-      // Should fail after all retries without fallback
+-      expect(result).toBeInstanceOf(Error);
+-      expect(result.message).toBe('Rate limit exceeded');
+-
+-      // Callback should not be called for API key users
+-      expect(fallbackCallback).not.toHaveBeenCalled();
+-    });
+-
+-    it('should reset attempt counter and continue after successful fallback', async () => {
+-      let fallbackCalled = false;
+-      const fallbackCallback = vi.fn().mockImplementation(async () => {
+-        fallbackCalled = true;
+-        return 'gemini-2.5-flash';
+-      });
+-
+-      const mockFn = vi.fn().mockImplementation(async () => {
+-        if (!fallbackCalled) {
+-          const error: HttpError = new Error('Rate limit exceeded');
+-          error.status = 429;
+-          throw error;
+-        }
+-        return 'success';
+-      });
+-
+-      const promise = retryWithBackoff(mockFn, {
+-        maxAttempts: 3,
+-        initialDelayMs: 100,
+-        onPersistent429: fallbackCallback,
+-        authType: 'oauth-personal',
+-      });
+-
+-      await vi.runAllTimersAsync();
+-
+-      await expect(promise).resolves.toBe('success');
+-      expect(fallbackCallback).toHaveBeenCalledOnce();
+-    });
+-
+-    it('should continue with original error if fallback is rejected', async () => {
+-      const fallbackCallback = vi.fn().mockResolvedValue(null); // User rejected fallback
+-
+-      const mockFn = vi.fn(async () => {
+-        const error: HttpError = new Error('Rate limit exceeded');
+-        error.status = 429;
+-        throw error;
+-      });
+-
+-      const promise = retryWithBackoff(mockFn, {
+-        maxAttempts: 3,
+-        initialDelayMs: 100,
+-        onPersistent429: fallbackCallback,
+-        authType: 'oauth-personal',
+-      });
+-
+-      // Handle the promise properly to avoid unhandled rejections
+-      const resultPromise = promise.catch((error) => error);
+-      await vi.runAllTimersAsync();
+-      const result = await resultPromise;
+-
+-      // Should fail with original error when fallback is rejected
+-      expect(result).toBeInstanceOf(Error);
+-      expect(result.message).toBe('Rate limit exceeded');
+-      expect(fallbackCallback).toHaveBeenCalledWith('oauth-personal');
+-    });
+-
+-    it('should handle mixed error types (only count consecutive 429s)', async () => {
+-      const fallbackCallback = vi.fn().mockResolvedValue('gemini-2.5-flash');
+-      let attempts = 0;
+-      let fallbackOccurred = false;
+-
+-      const mockFn = vi.fn().mockImplementation(async () => {
+-        attempts++;
+-        if (fallbackOccurred) {
+-          return 'success';
+-        }
+-        if (attempts === 1) {
+-          // First attempt: 500 error (resets consecutive count)
+-          const error: HttpError = new Error('Server error');
+-          error.status = 500;
+-          throw error;
+-        } else {
+-          // Remaining attempts: 429 errors
+-          const error: HttpError = new Error('Rate limit exceeded');
+-          error.status = 429;
+-          throw error;
+-        }
+-      });
+-
+-      const promise = retryWithBackoff(mockFn, {
+-        maxAttempts: 5,
+-        initialDelayMs: 100,
+-        onPersistent429: async (authType?: string) => {
+-          fallbackOccurred = true;
+-          return await fallbackCallback(authType);
+-        },
+-        authType: 'oauth-personal',
+-      });
+-
+-      await vi.runAllTimersAsync();
+-
+-      await expect(promise).resolves.toBe('success');
+-
+-      // Should trigger fallback after 2 consecutive 429s (attempts 2-3)
+-      expect(fallbackCallback).toHaveBeenCalledWith('oauth-personal');
+-    });
+-  });
+ });
+diff --git a/packages/core/src/utils/retry.ts b/packages/core/src/utils/retry.ts
+index 372a797..d05365e 100644
+--- a/packages/core/src/utils/retry.ts
++++ b/packages/core/src/utils/retry.ts
+@@ -4,15 +4,11 @@
+  * SPDX-License-Identifier: Apache-2.0
+  */
+ 
+-import { AuthType } from '../core/contentGenerator.js';
+-
+ export interface RetryOptions {
+   maxAttempts: number;
+   initialDelayMs: number;
+   maxDelayMs: number;
+   shouldRetry: (error: Error) => boolean;
+-  onPersistent429?: (authType?: string) => Promise<string | null>;
+-  authType?: string;
+ }
+ 
+ const DEFAULT_RETRY_OPTIONS: RetryOptions = {
+@@ -63,21 +59,13 @@ export async function retryWithBackoff<T>(
+   fn: () => Promise<T>,
+   options?: Partial<RetryOptions>,
+ ): Promise<T> {
+-  const {
+-    maxAttempts,
+-    initialDelayMs,
+-    maxDelayMs,
+-    onPersistent429,
+-    authType,
+-    shouldRetry,
+-  } = {
++  const { maxAttempts, initialDelayMs, maxDelayMs, shouldRetry } = {
+     ...DEFAULT_RETRY_OPTIONS,
+     ...options,
+   };
+ 
+   let attempt = 0;
+   let currentDelay = initialDelayMs;
+-  let consecutive429Count = 0;
+ 
+   while (attempt < maxAttempts) {
+     attempt++;
+@@ -88,31 +76,9 @@ export async function retryWithBackoff<T>(
+ 
+       // Track consecutive 429 errors
+       if (errorStatus === 429) {
+-        consecutive429Count++;
++        // No longer tracking consecutive 429 errors
+       } else {
+-        consecutive429Count = 0;
+-      }
+-
+-      // If we have persistent 429s and a fallback callback for OAuth
+-      if (
+-        consecutive429Count >= 2 &&
+-        onPersistent429 &&
+-        authType === AuthType.LOGIN_WITH_GOOGLE_PERSONAL
+-      ) {
+-        try {
+-          const fallbackModel = await onPersistent429(authType);
+-          if (fallbackModel) {
+-            // Reset attempt counter and try with new model
+-            attempt = 0;
+-            consecutive429Count = 0;
+-            currentDelay = initialDelayMs;
+-            // With the model updated, we continue to the next attempt
+-            continue;
+-          }
+-        } catch (fallbackError) {
+-          // If fallback fails, continue with original error
+-          console.warn('Fallback to Flash model failed:', fallbackError);
+-        }
++        // No longer tracking consecutive 429 errors
+       }
+ 
+       // Check if we've exhausted retries or shouldn't retry

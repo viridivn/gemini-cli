@@ -1,3 +1,5 @@
+This fork of the Gemini CLI has been modified to not auto-switch to Gemini Flash when slow response times are experienced. It does NOT increase any ratelimits or work around any paywalls - you'll still hit the same ratelimits, but you'll actually know about them instead of silently switching to a worse model.
+---
 # Gemini CLI
 
 [![Gemini CLI CI](https://github.com/google-gemini/gemini-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/google-gemini/gemini-cli/actions/workflows/ci.yml)

@@ -223,7 +223,7 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
     }
   }, [config, addItem]);
 
-  // Watch for model changes (e.g., from Flash fallback)
+  // Watch for model changes
   useEffect(() => {
     const checkModelChange = () => {
       const configModel = config.getModel();
@@ -238,29 +238,6 @@ const App = ({ config, settings, startupWarnings = [] }: AppProps) => {
 
     return () => clearInterval(interval);
   }, [config, currentModel]);
-
-  // Set up Flash fallback handler
-  useEffect(() => {
-    const flashFallbackHandler = async (
-      currentModel: string,
-      fallbackModel: string,
-    ): Promise<boolean> => {
-      // Add message to UI history
-      addItem(
-        {
-          type: MessageType.INFO,
-          text: `⚡ Slow response times detected. Automatically switching from ${currentModel} to ${fallbackModel} for faster responses for the remainder of this session.
-⚡ To avoid this you can either upgrade to Standard tier. See: https://goo.gle/set-up-gemini-code-assist
-⚡ Or you can utilize a Gemini API Key. See: https://goo.gle/gemini-cli-docs-auth#gemini-api-key
-⚡ You can switch authentication methods by typing /auth`,
-        },
-        Date.now(),
-      );
-      return true; // Always accept the fallback
-    };
-
-    config.setFlashFallbackHandler(flashFallbackHandler);
-  }, [config, addItem]);
 
   const {
     handleSlashCommand,

@@ -32,7 +32,6 @@ import { retryWithBackoff } from '../utils/retry.js';
 import { getErrorMessage } from '../utils/errors.js';
 import { tokenLimit } from './tokenLimits.js';
 import {
-  AuthType,
   ContentGenerator,
   ContentGeneratorConfig,
   createContentGenerator,
@@ -276,11 +275,7 @@ export class GeminiClient {
           contents,
         });
 
-      const result = await retryWithBackoff(apiCall, {
-        onPersistent429: async (authType?: string) =>
-          await this.handleFlashFallback(authType),
-        authType: this.config.getContentGeneratorConfig()?.authType,
-      });
+      const result = await retryWithBackoff(apiCall);
 
       const text = getResponseText(result);
       if (!text) {
@@ -364,11 +359,7 @@ export class GeminiClient {
           contents,
         });
 
-      const result = await retryWithBackoff(apiCall, {
-        onPersistent429: async (authType?: string) =>
-          await this.handleFlashFallback(authType),
-        authType: this.config.getContentGeneratorConfig()?.authType,
-      });
+      const result = await retryWithBackoff(apiCall);
       return result;
     } catch (error: unknown) {
       if (abortSignal.aborted) {
@@ -496,41 +487,5 @@ export class GeminiClient {
           newTokenCount,
         }
       : null;
-  }
-
-  /**
-   * Handles fallback to Flash model when persistent 429 errors occur for OAuth users.
-   * Uses a fallback handler if provided by the config, otherwise returns null.
-   */
-  private async handleFlashFallback(authType?: string): Promise<string | null> {
-    // Only handle fallback for OAuth users
-    if (authType !== AuthType.LOGIN_WITH_GOOGLE_PERSONAL) {
-      return null;
-    }
-
-    const currentModel = this.model;
-    const fallbackModel = DEFAULT_GEMINI_FLASH_MODEL;
-
-    // Don't fallback if already using Flash model
-    if (currentModel === fallbackModel) {
-      return null;
-    }
-
-    // Check if config has a fallback handler (set by CLI package)
-    const fallbackHandler = this.config.flashFallbackHandler;
-    if (typeof fallbackHandler === 'function') {
-      try {
-        const accepted = await fallbackHandler(currentModel, fallbackModel);
-        if (accepted) {
-          this.config.setModel(fallbackModel);
-          this.model = fallbackModel;
-          return fallbackModel;
-        }
-      } catch (error) {
-        console.warn('Flash fallback handler failed:', error);
-      }
-    }
-
-    return null;
   }
 }

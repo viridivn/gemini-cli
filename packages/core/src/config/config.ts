@@ -91,11 +91,6 @@ export interface SandboxConfig {
   image: string;
 }
 
-export type FlashFallbackHandler = (
-  currentModel: string,
-  fallbackModel: string,
-) => Promise<boolean>;
-
 export interface ConfigParameters {
   sessionId: string;
   embeddingModel?: string;
@@ -168,7 +163,6 @@ export class Config {
   private readonly model: string;
   private readonly extensionContextFilePaths: string[];
   private modelSwitchedDuringSession: boolean = false;
-  flashFallbackHandler?: FlashFallbackHandler;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -284,10 +278,6 @@ export class Config {
       this.contentGeneratorConfig.model = this.model; // Reset to the original default model
       this.modelSwitchedDuringSession = false;
     }
-  }
-
-  setFlashFallbackHandler(handler: FlashFallbackHandler): void {
-    this.flashFallbackHandler = handler;
   }
 
   getEmbeddingModel(): string {
