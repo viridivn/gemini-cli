@@ -74,13 +74,16 @@ describe('GeminiChat', () => {
       } as unknown as GenerateContentResponse;
       vi.mocked(mockModelsModule.generateContent).mockResolvedValue(response);
 
-      await chat.sendMessage({ message: 'hello' });
+      await chat.sendMessage({ message: 'hello' }, 'prompt-id-1');
 
-      expect(mockModelsModule.generateContent).toHaveBeenCalledWith({
-        model: 'gemini-pro',
-        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
-        config: {},
-      });
+      expect(mockModelsModule.generateContent).toHaveBeenCalledWith(
+        {
+          model: 'gemini-pro',
+          contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+          config: {},
+        },
+        'prompt-id-1',
+      );
     });
   });
 
@@ -106,13 +109,16 @@ describe('GeminiChat', () => {
         response,
       );
 
-      await chat.sendMessageStream({ message: 'hello' });
+      await chat.sendMessageStream({ message: 'hello' }, 'prompt-id-1');
 
-      expect(mockModelsModule.generateContentStream).toHaveBeenCalledWith({
-        model: 'gemini-pro',
-        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
-        config: {},
-      });
+      expect(mockModelsModule.generateContentStream).toHaveBeenCalledWith(
+        {
+          model: 'gemini-pro',
+          contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+          config: {},
+        },
+        'prompt-id-1',
+      );
     });
   });
 
