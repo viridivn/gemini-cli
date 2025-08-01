@@ -331,6 +331,12 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     return () => clearInterval(interval);
   }, [config, currentModel]);
 
+    const {
+    vimEnabled: vimModeEnabled,
+    vimMode,
+    toggleVimEnabled,
+  } = useVimMode();
+  
   const {
     handleSlashCommand,
     slashCommands,
