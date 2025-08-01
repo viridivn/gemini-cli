@@ -331,7 +331,44 @@ const App = ({ config, settings, startupWarnings = [], version }: AppProps) => {
     return () => clearInterval(interval);
   }, [config, currentModel]);
 
-    const {
+  // Terminal and UI setup
+  const { rows: terminalHeight, columns: terminalWidth } = useTerminalSize();
+  const { stdin, setRawMode } = useStdin();
+  const isInitialMount = useRef(true);
+
+  const widthFraction = 0.9;
+  const inputWidth = Math.max(
+    20,
+    Math.floor(terminalWidth * widthFraction) - 3,
+  );
+  const suggestionsWidth = Math.max(60, Math.floor(terminalWidth * 0.8));
+
+  // Utility callbacks
+  const isValidPath = useCallback((filePath: string): boolean => {
+    try {
+      return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+    } catch (_e) {
+      return false;
+    }
+  }, []);
+
+  const getPreferredEditor = useCallback(() => {
+    const editorType = settings.merged.preferredEditor;
+    const isValidEditor = isEditorAvailable(editorType);
+    if (!isValidEditor) {
+      openEditorDialog();
+      return;
+    }
+    return editorType as EditorType;
+  }, [settings, openEditorDialog]);
+
+  const onAuthError = useCallback(() => {
+    setAuthError('reauth required');
+    openAuthDialog();
+  }, [openAuthDialog, setAuthError]);
+
+  // Core hooks and processors
+  const {
     vimEnabled: vimModeEnabled,
     vimMode,
     toggleVimEnabled,
